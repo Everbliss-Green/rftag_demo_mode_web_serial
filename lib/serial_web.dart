@@ -78,7 +78,7 @@ class PlatformSerial {
       // Get device info
       final info = await _usb.getPairedDeviceInfo(_device);
       _log(
-        'Device: ${info.productName ?? "Unknown"} (VID: 0x${info.vendorId?.toRadixString(16)})',
+        'Device: ${info.productName} (VID: 0x${info.vendorId.toRadixString(16)})',
       );
 
       // Open device
@@ -97,43 +97,56 @@ class PlatformSerial {
         return false;
       }
 
-      // Find CDC data interface (usually interface 1 for CDC ACM)
-      int interfaceNum = 1; // Try interface 1 first (CDC data interface)
-
+      // Find and claim an interface that has BOTH bulk IN and OUT endpoints
       if (config.usbInterfaces != null && config.usbInterfaces!.isNotEmpty) {
         _log('Found ${config.usbInterfaces!.length} interfaces');
 
-        // Look for bulk endpoints
-        for (var iface in config.usbInterfaces!) {
-          if (iface.alternatesInterface != null) {
-            for (var alt in iface.alternatesInterface!) {
-              if (alt.endpoints != null) {
-                for (var ep in alt.endpoints!) {
-                  if (ep.type == 'bulk') {
-                    interfaceNum = iface.interfaceNumber;
-                    if (ep.direction == 'in') {
-                      _inEndpoint = ep.endpointNumber;
-                      _log('Found IN endpoint: ${ep.endpointNumber}');
-                    } else if (ep.direction == 'out') {
-                      _outEndpoint = ep.endpointNumber;
-                      _log('Found OUT endpoint: ${ep.endpointNumber}');
-                    }
-                  }
-                }
+        for (final iface in config.usbInterfaces!) {
+          if (iface.alternatesInterface == null) continue;
+
+          for (final alt in iface.alternatesInterface!) {
+            if (alt.endpoints == null) continue;
+
+            int? inEp;
+            int? outEp;
+
+            for (final ep in alt.endpoints!) {
+              if (ep.type != 'bulk') continue;
+              if (ep.direction == 'in') {
+                inEp = ep.endpointNumber;
+              } else if (ep.direction == 'out') {
+                outEp = ep.endpointNumber;
+              }
+            }
+
+            if (inEp != null && outEp != null) {
+              _log(
+                'Trying interface ${iface.interfaceNumber} (IN $inEp, OUT $outEp)',
+              );
+              try {
+                await _usb.claimInterface(_device, iface.interfaceNumber);
+                _claimedInterface = iface.interfaceNumber;
+                _inEndpoint = inEp;
+                _outEndpoint = outEp;
+                _log('Interface ${iface.interfaceNumber} claimed');
+                break;
+              } catch (e) {
+                _log('Failed to claim interface ${iface.interfaceNumber}: $e');
               }
             }
           }
+
+          if (_claimedInterface != null) break;
         }
       }
 
-      // Use default endpoints if not found
-      _inEndpoint ??= 2;
-      _outEndpoint ??= 2;
-
-      // Claim interface
-      await _usb.claimInterface(_device, interfaceNum);
-      _log('Interface $interfaceNum claimed');
-      _claimedInterface = interfaceNum;
+      if (_claimedInterface == null ||
+          _inEndpoint == null ||
+          _outEndpoint == null) {
+        _log('No claimable interface with bulk IN/OUT endpoints found');
+        await _usb.close(_device);
+        return false;
+      }
 
       _isConnected = true;
 
