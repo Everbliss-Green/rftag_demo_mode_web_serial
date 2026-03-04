@@ -97,53 +97,79 @@ class PlatformSerial {
         return false;
       }
 
-      // Find and claim an interface that has BOTH bulk IN and OUT endpoints
+      // CDC ACM devices have paired interfaces: control (even) + data (odd)
+      // For 3 CDC ports: interfaces 0+1, 2+3, 4+5
+      // The data interface (odd numbers: 1, 3, 5) has the bulk endpoints
+      // We want interface 1 for the first CDC port (shell)
+
+      // First, collect all interfaces with their endpoints
+      final interfaceData = <int, Map<String, int?>>{};
+
       if (config.usbInterfaces != null && config.usbInterfaces!.isNotEmpty) {
         _log('Found ${config.usbInterfaces!.length} interfaces');
 
         for (final iface in config.usbInterfaces!) {
-          if (iface.alternatesInterface == null) continue;
+          final ifaceNum = iface.interfaceNumber;
+          int? inEp;
+          int? outEp;
 
-          for (final alt in iface.alternatesInterface!) {
-            if (alt.endpoints == null) continue;
+          if (iface.alternatesInterface != null) {
+            for (final alt in iface.alternatesInterface!) {
+              if (alt.endpoints == null) continue;
 
-            int? inEp;
-            int? outEp;
-
-            for (final ep in alt.endpoints!) {
-              if (ep.type != 'bulk') continue;
-              if (ep.direction == 'in') {
-                inEp = ep.endpointNumber;
-              } else if (ep.direction == 'out') {
-                outEp = ep.endpointNumber;
-              }
-            }
-
-            if (inEp != null && outEp != null) {
-              _log(
-                'Trying interface ${iface.interfaceNumber} (IN $inEp, OUT $outEp)',
-              );
-              try {
-                await _usb.claimInterface(_device, iface.interfaceNumber);
-                _claimedInterface = iface.interfaceNumber;
-                _inEndpoint = inEp;
-                _outEndpoint = outEp;
-                _log('Interface ${iface.interfaceNumber} claimed');
-                break;
-              } catch (e) {
-                _log('Failed to claim interface ${iface.interfaceNumber}: $e');
+              for (final ep in alt.endpoints!) {
+                final epNum = ep.endpointNumber;
+                _log(
+                  'Interface $ifaceNum: endpoint $epNum ${ep.direction} (${ep.type})',
+                );
+                if (ep.type != 'bulk') continue;
+                if (ep.direction == 'in') {
+                  inEp = epNum;
+                } else if (ep.direction == 'out') {
+                  outEp = epNum;
+                }
               }
             }
           }
 
-          if (_claimedInterface != null) break;
+          interfaceData[ifaceNum] = {'in': inEp, 'out': outEp};
+        }
+      }
+
+      // Try claiming interfaces in order: 1, 3, 5 (CDC ACM data interfaces)
+      // These correspond to ttyACM0, ttyACM1, ttyACM2 respectively
+      final dataInterfaces = [1, 3, 5, 0, 2, 4]; // Try data interfaces first
+
+      for (final ifaceNum in dataInterfaces) {
+        if (!interfaceData.containsKey(ifaceNum)) continue;
+
+        final data = interfaceData[ifaceNum]!;
+        final inEp = data['in'];
+        final outEp = data['out'];
+
+        if (inEp == null || outEp == null) {
+          _log('Interface $ifaceNum: no bulk IN/OUT endpoints, skipping');
+          continue;
+        }
+
+        _log('Trying to claim interface $ifaceNum (IN: $inEp, OUT: $outEp)');
+
+        try {
+          await _usb.claimInterface(_device, ifaceNum);
+          _claimedInterface = ifaceNum;
+          _inEndpoint = inEp;
+          _outEndpoint = outEp;
+          _log('✓ Successfully claimed interface $ifaceNum');
+          break;
+        } catch (e) {
+          _log('✗ Failed to claim interface $ifaceNum: $e');
         }
       }
 
       if (_claimedInterface == null ||
           _inEndpoint == null ||
           _outEndpoint == null) {
-        _log('No claimable interface with bulk IN/OUT endpoints found');
+        _log('Could not claim any interface - device may be in use');
         await _usb.close(_device);
         return false;
       }
