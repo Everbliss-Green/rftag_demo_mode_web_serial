@@ -28,16 +28,14 @@ jobs:
 
       - name: Pub get
         run: flutter pub get
-        working-directory: rftag_demo_web
 
       - name: Build web
         run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
-        working-directory: rftag_demo_web
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: rftag_demo_web/build/web
+          path: build/web
 
   deploy:
     needs: build
