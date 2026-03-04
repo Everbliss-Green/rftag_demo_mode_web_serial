@@ -83,19 +83,6 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
-  flutter_web_plugins:
-    dependency: transitive
-    description: flutter
-    source: sdk
-    version: "0.0.0"
-  js:
-    dependency: transitive
-    description:
-      name: js
-      sha256: f2c445dce49627136094980615a031419f7f3eb393237e4ecd97ac15dea343f3
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.6.7"
   leak_tracker:
     dependency: transitive
     description:
@@ -168,14 +155,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.8"
-  serial:
-    dependency: "direct main"
-    description:
-      name: serial
-      sha256: "264e85ac2af4cdb3b16879992429ba8fb47b4ded1a06b8249b6f4357df855e2b"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.0.7+1"
   sky_engine:
     dependency: transitive
     description: flutter
@@ -229,30 +208,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.7"
-  usb_device:
-    dependency: "direct main"
-    description:
-      name: usb_device
-      sha256: ac37b62070c43c40968052f1d6e96470aad840d939cc611a3507e29f230b9354
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.2"
-  usb_device_platform_interface:
-    dependency: transitive
-    description:
-      name: usb_device_platform_interface
-      sha256: f289c75091376462b563fd94b74f60aa6447e6429a5a88bd70effc35c39c9570
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0"
-  usb_device_web:
-    dependency: transitive
-    description:
-      name: usb_device_web
-      sha256: "1a83133fa5a70ae8bd3cd1886579c322748d5c9765e61a2c1597353b21b082fc"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0"
   vector_math:
     dependency: transitive
     description:
@@ -270,7 +225,7 @@ packages:
     source: hosted
     version: "15.0.2"
   web:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: web
       sha256: "868d88a33d8a87b18ffc05f9f030ba328ffefba92d6c127917a2ba740f9cfe4a"

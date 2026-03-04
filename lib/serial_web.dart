@@ -1,21 +1,17 @@
 import 'dart:async';
+import 'dart:js_interop';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:usb_device/usb_device.dart';
 
-/// Web implementation using WebUSB API
-/// Works on Android Chrome 61+, Chrome 61+, Edge 79+, Samsung Internet 8+
+/// Web implementation using Web Serial API
+/// Works on Android Chrome 89+, Chrome 89+, Edge 89+
 class PlatformSerial {
-  final UsbDevice _usb = UsbDevice();
-  dynamic _device;
+  JSObject? _port;
+  JSObject? _reader;
+  JSObject? _writer;
   bool _isConnected = false;
   bool _isReading = false;
-  int? _claimedInterface;
-
-  // Endpoints
-  int? _inEndpoint;
-  int? _outEndpoint;
 
   // Stream controllers
   final _logController = StreamController<String>.broadcast();
@@ -39,149 +35,110 @@ class PlatformSerial {
         .join(' ');
   }
 
-  Uint8List? _normalizeInData(dynamic data) {
-    if (data == null) return null;
-    if (data is Uint8List) return data;
-    if (data is ByteBuffer) return Uint8List.view(data);
-    if (data is List<int>) return Uint8List.fromList(data);
-    return null;
-  }
-
   Future<bool> connect() async {
     try {
-      // Check if WebUSB is supported
-      final supported = await _usb.isSupported();
-      if (!supported) {
-        _log('WebUSB not supported in this browser');
+      // Check if Web Serial is supported
+      final serial = _getSerial();
+      if (serial == null) {
+        _log('Web Serial API not supported in this browser');
         return false;
       }
-      _log('WebUSB supported');
+      _log('Web Serial API supported');
 
-      // nRF52840 USB VID/PIDs
-      final filters = [
-        DeviceFilter(
-          vendorId: 0x1915,
-          productId: 0x520F,
-        ), // Nordic Semiconductor
-        DeviceFilter(vendorId: 0x1915, productId: 0x521F),
-        DeviceFilter(vendorId: 0x1915, productId: 0xCAFE),
-      ];
+      // Request port from user
+      _log('Requesting serial port...');
 
-      _log('Requesting USB device...');
-      _device = await _usb.requestDevices(filters);
+      // Create filter for Nordic Semiconductor devices
+      final filter1 = _createObject();
+      _setProperty(filter1, 'usbVendorId', 0x1915.toJS);
+      _setProperty(filter1, 'usbProductId', 0x520F.toJS);
 
-      if (_device == null) {
-        _log('No device selected');
-        return false;
-      }
+      final filter2 = _createObject();
+      _setProperty(filter2, 'usbVendorId', 0x1915.toJS);
+      _setProperty(filter2, 'usbProductId', 0x521F.toJS);
 
-      // Get device info
-      final info = await _usb.getPairedDeviceInfo(_device);
-      _log(
-        'Device: ${info.productName} (VID: 0x${info.vendorId.toRadixString(16)})',
-      );
+      final filter3 = _createObject();
+      _setProperty(filter3, 'usbVendorId', 0x1915.toJS);
+      _setProperty(filter3, 'usbProductId', 0xCAFE.toJS);
 
-      // Open device
-      await _usb.open(_device);
-      _log('Device opened');
+      final filters = <JSObject>[filter1, filter2, filter3].toJS;
 
-      // Select configuration
-      await _usb.selectConfiguration(_device, 1);
-      _log('Configuration selected');
+      final options = _createObject();
+      _setProperty(options, 'filters', filters);
 
-      // Get configuration to find endpoints
-      final config = await _usb.getSelectedConfiguration(_device);
-      if (config == null) {
-        _log('Could not get configuration');
-        await _usb.close(_device);
+      try {
+        final requestPortFn = _getProperty(serial, 'requestPort') as JSFunction;
+        final portPromise =
+            requestPortFn.callAsFunction(serial, options) as JSPromise;
+        _port = await portPromise.toDart as JSObject?;
+      } catch (e) {
+        _log('User cancelled or no device selected: $e');
         return false;
       }
 
-      // CDC ACM devices have paired interfaces: control (even) + data (odd)
-      // For 3 CDC ports: interfaces 0+1, 2+3, 4+5
-      // The data interface (odd numbers: 1, 3, 5) has the bulk endpoints
-      // We want interface 1 for the first CDC port (shell)
+      if (_port == null) {
+        _log('No port selected');
+        return false;
+      }
 
-      // First, collect all interfaces with their endpoints
-      final interfaceData = <int, Map<String, int?>>{};
-
-      if (config.usbInterfaces != null && config.usbInterfaces!.isNotEmpty) {
-        _log('Found ${config.usbInterfaces!.length} interfaces');
-
-        for (final iface in config.usbInterfaces!) {
-          final ifaceNum = iface.interfaceNumber;
-          int? inEp;
-          int? outEp;
-
-          if (iface.alternatesInterface != null) {
-            for (final alt in iface.alternatesInterface!) {
-              if (alt.endpoints == null) continue;
-
-              for (final ep in alt.endpoints!) {
-                final epNum = ep.endpointNumber;
-                _log(
-                  'Interface $ifaceNum: endpoint $epNum ${ep.direction} (${ep.type})',
-                );
-                if (ep.type != 'bulk') continue;
-                if (ep.direction == 'in') {
-                  inEp = epNum;
-                } else if (ep.direction == 'out') {
-                  outEp = epNum;
-                }
-              }
-            }
+      // Get port info
+      try {
+        final getInfoFn = _getProperty(_port!, 'getInfo') as JSFunction?;
+        if (getInfoFn != null) {
+          final info = getInfoFn.callAsFunction(_port!) as JSObject?;
+          if (info != null) {
+            final vid = _getIntProperty(info, 'usbVendorId');
+            final pid = _getIntProperty(info, 'usbProductId');
+            _log(
+              'Port selected (VID: 0x${vid?.toRadixString(16) ?? "?"}, PID: 0x${pid?.toRadixString(16) ?? "?"})',
+            );
           }
-
-          interfaceData[ifaceNum] = {'in': inEp, 'out': outEp};
         }
+      } catch (e) {
+        _log('Could not get port info: $e');
       }
 
-      // Try claiming interfaces in order: 1, 3, 5 (CDC ACM data interfaces)
-      // These correspond to ttyACM0, ttyACM1, ttyACM2 respectively
-      final dataInterfaces = [1, 3, 5, 0, 2, 4]; // Try data interfaces first
+      // Open the port
+      _log('Opening port at 115200 baud...');
+      final openOptions = _createObject();
+      _setProperty(openOptions, 'baudRate', 115200.toJS);
+      _setProperty(openOptions, 'dataBits', 8.toJS);
+      _setProperty(openOptions, 'stopBits', 1.toJS);
+      _setProperty(openOptions, 'parity', 'none'.toJS);
+      _setProperty(openOptions, 'flowControl', 'none'.toJS);
 
-      for (final ifaceNum in dataInterfaces) {
-        if (!interfaceData.containsKey(ifaceNum)) continue;
+      final openFn = _getProperty(_port!, 'open') as JSFunction;
+      final openPromise =
+          openFn.callAsFunction(_port!, openOptions) as JSPromise;
+      await openPromise.toDart;
+      _log('✓ Port opened successfully');
 
-        final data = interfaceData[ifaceNum]!;
-        final inEp = data['in'];
-        final outEp = data['out'];
+      // Get reader and writer
+      final readable = _getProperty(_port!, 'readable') as JSObject?;
+      final writable = _getProperty(_port!, 'writable') as JSObject?;
 
-        if (inEp == null || outEp == null) {
-          _log('Interface $ifaceNum: no bulk IN/OUT endpoints, skipping');
-          continue;
-        }
-
-        _log('Trying to claim interface $ifaceNum (IN: $inEp, OUT: $outEp)');
-
-        try {
-          await _usb.claimInterface(_device, ifaceNum);
-          _claimedInterface = ifaceNum;
-          _inEndpoint = inEp;
-          _outEndpoint = outEp;
-          _log('✓ Successfully claimed interface $ifaceNum');
-          break;
-        } catch (e) {
-          _log('✗ Failed to claim interface $ifaceNum: $e');
-        }
-      }
-
-      if (_claimedInterface == null ||
-          _inEndpoint == null ||
-          _outEndpoint == null) {
-        _log('Could not claim any interface - device may be in use');
-        await _usb.close(_device);
+      if (readable == null || writable == null) {
+        _log('Could not get readable/writable streams');
+        await _closePort();
         return false;
       }
+
+      final getReaderFn = _getProperty(readable, 'getReader') as JSFunction;
+      _reader = getReaderFn.callAsFunction(readable) as JSObject;
+
+      final getWriterFn = _getProperty(writable, 'getWriter') as JSFunction;
+      _writer = getWriterFn.callAsFunction(writable) as JSObject;
 
       _isConnected = true;
+      _log('✓ Connected to serial port');
 
       // Start reading data
       _startReading();
 
       return true;
-    } catch (e) {
+    } catch (e, st) {
       _log('Connect error: $e');
+      debugPrint('Stack trace: $st');
       return false;
     }
   }
@@ -192,27 +149,65 @@ class PlatformSerial {
   }
 
   Future<void> _readLoop() async {
-    while (_isReading && _isConnected && _device != null) {
+    while (_isReading && _isConnected && _reader != null) {
       try {
-        // Read from bulk IN endpoint
-        final result = await _usb.transferIn(_device, _inEndpoint!, 64);
+        final readFn = _getProperty(_reader!, 'read') as JSFunction;
+        final readPromise = readFn.callAsFunction(_reader!) as JSPromise;
+        final result = await readPromise.toDart as JSObject;
 
-        final bytes = _normalizeInData(result.data);
-        if (bytes != null && bytes.isNotEmpty) {
-          _dataController.add(bytes);
-          _log('RX: ${_bytesToHex(bytes)}');
+        final done = _getBoolProperty(result, 'done');
+        if (done == true) {
+          _log('Read stream ended');
+          break;
+        }
+
+        final value = _getProperty(result, 'value') as JSObject?;
+        if (value != null) {
+          final bytes = _uint8ArrayToList(value);
+          if (bytes.isNotEmpty) {
+            _dataController.add(bytes);
+
+            // Try to decode as text for logging
+            try {
+              final text = String.fromCharCodes(bytes);
+              _log('RX: $text');
+            } catch (_) {
+              _log('RX: ${_bytesToHex(bytes)}');
+            }
+          }
         }
       } catch (e) {
-        // Timeout or other read errors are normal for polling
-        if (e.toString().contains('timeout')) continue;
-
         if (_isReading) {
           _log('Read error: $e');
+          break;
         }
       }
+    }
+  }
 
-      // Small delay between reads
-      await Future.delayed(const Duration(milliseconds: 10));
+  Uint8List _uint8ArrayToList(JSObject jsArray) {
+    final length = _getIntProperty(jsArray, 'length') ?? 0;
+    final result = Uint8List(length);
+    for (var i = 0; i < length; i++) {
+      final val = _getProperty(jsArray, i.toString());
+      if (val != null) {
+        result[i] = (val as JSNumber).toDartInt;
+      }
+    }
+    return result;
+  }
+
+  Future<void> _closePort() async {
+    if (_port != null) {
+      try {
+        final closeFn = _getProperty(_port!, 'close') as JSFunction?;
+        if (closeFn != null) {
+          final closePromise = closeFn.callAsFunction(_port!) as JSPromise;
+          await closePromise.toDart;
+        }
+      } catch (e) {
+        _log('Close port error: $e');
+      }
     }
   }
 
@@ -220,45 +215,76 @@ class PlatformSerial {
     _isReading = false;
     _isConnected = false;
 
-    if (_device != null) {
-      try {
-        if (_claimedInterface != null) {
-          await _usb.releaseInterface(_device, _claimedInterface!);
-        }
-        await _usb.close(_device);
-        _log('Disconnected');
-      } catch (e) {
-        _log('Disconnect error: $e');
+    try {
+      if (_reader != null) {
+        try {
+          final cancelFn = _getProperty(_reader!, 'cancel') as JSFunction?;
+          if (cancelFn != null) {
+            final cancelPromise =
+                cancelFn.callAsFunction(_reader!) as JSPromise;
+            await cancelPromise.toDart;
+          }
+        } catch (_) {}
+        try {
+          final releaseFn =
+              _getProperty(_reader!, 'releaseLock') as JSFunction?;
+          if (releaseFn != null) {
+            releaseFn.callAsFunction(_reader!);
+          }
+        } catch (_) {}
+        _reader = null;
       }
-      _device = null;
-    }
 
-    _inEndpoint = null;
-    _outEndpoint = null;
-    _claimedInterface = null;
+      if (_writer != null) {
+        try {
+          final closeFn = _getProperty(_writer!, 'close') as JSFunction?;
+          if (closeFn != null) {
+            final closePromise = closeFn.callAsFunction(_writer!) as JSPromise;
+            await closePromise.toDart;
+          }
+        } catch (_) {}
+        try {
+          final releaseFn =
+              _getProperty(_writer!, 'releaseLock') as JSFunction?;
+          if (releaseFn != null) {
+            releaseFn.callAsFunction(_writer!);
+          }
+        } catch (_) {}
+        _writer = null;
+      }
+
+      await _closePort();
+      _port = null;
+      _log('Disconnected');
+    } catch (e) {
+      _log('Disconnect error: $e');
+    }
   }
 
   Future<bool> sendBytes(Uint8List data) async {
-    if (!_isConnected || _device == null) {
+    if (!_isConnected || _writer == null) {
       _log('Not connected');
       return false;
     }
 
     try {
-      // Write to bulk OUT endpoint
-      final result = await _usb.transferOut(
-        _device,
-        _outEndpoint!,
-        data.buffer,
-      );
+      // Convert Uint8List to JSUint8Array
+      final jsArray = _listToUint8Array(data);
 
-      if (result.status == 'ok') {
+      final writeFn = _getProperty(_writer!, 'write') as JSFunction;
+      final writePromise =
+          writeFn.callAsFunction(_writer!, jsArray) as JSPromise;
+      await writePromise.toDart;
+
+      // Log the sent data as text
+      try {
+        final text = String.fromCharCodes(data);
+        _log('TX: $text');
+      } catch (_) {
         _log('TX: ${_bytesToHex(data)}');
-        return true;
-      } else {
-        _log('TX failed: ${result.status}');
-        return false;
       }
+
+      return true;
     } catch (e) {
       _log('Send error: $e');
       return false;
@@ -270,4 +296,38 @@ class PlatformSerial {
     _logController.close();
     _dataController.close();
   }
+}
+
+// JS interop helpers
+
+@JS('navigator.serial')
+external JSObject? _getSerial();
+
+@JS('Object.create')
+external JSObject _objectCreate(JSObject? proto);
+
+JSObject _createObject() {
+  return _objectCreate(null);
+}
+
+@JS('Reflect.set')
+external void _setProperty(JSObject obj, String key, JSAny? value);
+
+@JS('Reflect.get')
+external JSAny? _getProperty(JSObject obj, String key);
+
+int? _getIntProperty(JSObject obj, String key) {
+  final val = _getProperty(obj, key);
+  if (val == null || val.isUndefinedOrNull) return null;
+  return (val as JSNumber).toDartInt;
+}
+
+bool? _getBoolProperty(JSObject obj, String key) {
+  final val = _getProperty(obj, key);
+  if (val == null || val.isUndefinedOrNull) return null;
+  return (val as JSBoolean).toDart;
+}
+
+JSObject _listToUint8Array(Uint8List data) {
+  return data.toJS;
 }
