@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 // Conditional imports for platform-specific serial
@@ -233,9 +231,9 @@ class _DemoPageState extends State<DemoPage> {
                     padding: const EdgeInsets.all(8),
                     child: Text(
                       'Serial Log',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            color: Colors.white70,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleSmall?.copyWith(color: Colors.white70),
                     ),
                   ),
                   const Divider(color: Colors.white24, height: 1),

@@ -1,11 +1,26 @@
 import 'dart:async';
 import 'dart:js_interop';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
 /// Web implementation using Web Serial API
-/// Works on Android Chrome 89+, Chrome 89+, Edge 89+
+///
+/// IMPORTANT: Web Serial API is ONLY available on DESKTOP browsers:
+/// - Chrome 89+ (desktop only)
+/// - Edge 89+ (desktop only)
+/// - Opera 76+ (desktop only)
+///
+/// NOT SUPPORTED on:
+/// - Chrome for Android (Web Serial API is NOT available on mobile)
+/// - Safari (iOS/macOS)
+/// - Firefox (any platform)
+///
+/// On Android, the USB device is claimed by the Android USB subsystem
+/// (creating /dev/ttyACM* nodes), which prevents WebUSB-based polyfills
+/// from working.
+///
+/// For Android serial access, use the native Android app instead:
+///   flutter build apk
 class PlatformSerial {
   JSObject? _port;
   JSObject? _reader;
@@ -40,7 +55,16 @@ class PlatformSerial {
       // Check if Web Serial is supported
       final serial = _getSerial();
       if (serial == null) {
-        _log('Web Serial API not supported in this browser');
+        _log('❌ Web Serial API not supported');
+        _log('');
+        _log('⚠️  Web Serial is DESKTOP-ONLY!');
+        _log('   It does NOT work on Android Chrome.');
+        _log('');
+        _log('   Supported: Chrome/Edge/Opera (desktop)');
+        _log('   NOT supported: Android, iOS, Firefox');
+        _log('');
+        _log('   For Android: build and install the APK');
+        _log('   Command: flutter build apk');
         return false;
       }
       _log('Web Serial API supported');
