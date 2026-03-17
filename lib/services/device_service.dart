@@ -89,7 +89,8 @@ class DeviceService {
     // Create command interface
     _commands = RftagCommands(
       sendBytes: _serial.sendBytes,
-      dataStream: _serial.dataStream,
+      executeCommand: _serial.executeCommand,
+      dataStream: _serial.dataStream, // kept for compatibility
       onLog: (msg) =>
           _log(msg.startsWith('TX:') ? LogType.tx : LogType.rx, msg),
     );
@@ -98,48 +99,11 @@ class DeviceService {
     _log(LogType.info, '🔄 Syncing with shell...');
     await _commands!.syncShell();
 
-    // Get device info
-    await _fetchDeviceInfo();
+    // Skip device info fetch - go straight to commands
+    _deviceInfo = DeviceInfo(version: 'Connected', mac: 'N/A', battery: null);
+    _log(LogType.success, '✅ Ready for commands');
 
     return true;
-  }
-
-  /// Fetch device information (version, MAC, battery).
-  Future<void> _fetchDeviceInfo() async {
-    if (_commands == null) return;
-
-    _log(LogType.info, '📱 Fetching device info...');
-
-    String version = 'Unknown';
-    String mac = 'Unknown';
-    String? battery;
-
-    // Get version
-    final versionResult = await _commands!.getVersion();
-    if (versionResult.success) {
-      version = versionResult.output;
-    }
-
-    // Get MAC
-    final macResult = await _commands!.getMac();
-    if (macResult.success) {
-      final match = RegExp(
-        r'MAC:\s*([0-9A-Fa-f:]+)',
-      ).firstMatch(macResult.output);
-      if (match != null) {
-        mac = match.group(1)!.toUpperCase();
-      }
-    }
-
-    // Get battery
-    final batteryResult = await _commands!.getBattery();
-    if (batteryResult.success) {
-      battery = batteryResult.output;
-    }
-
-    _deviceInfo = DeviceInfo(version: version, mac: mac, battery: battery);
-
-    _log(LogType.success, '📱 Device: $version | MAC: $mac');
   }
 
   /// Disconnect from the device.

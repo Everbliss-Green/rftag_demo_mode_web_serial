@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import '../commands/rftag_commands.dart';
 import '../services/geo_service.dart';
 import 'base_scenario.dart';
@@ -7,11 +5,8 @@ import 'base_scenario.dart';
 /// Emergency scenario: Simulates a group member triggering an emergency alert.
 ///
 /// Steps:
-/// 1. Clear location repository
-/// 2. Add 4 group members at different positions
-/// 3. Trigger emergency on one member
-/// 4. Show alert propagation
-/// 5. Play emergency buzzer
+/// 1. Add 10 group members at different positions (2km radius)
+/// 2. Trigger emergency on one member
 class EmergencyScenario extends BaseScenario {
   EmergencyScenario({required super.deviceService, required super.geoService});
 
@@ -24,9 +19,8 @@ class EmergencyScenario extends BaseScenario {
   @override
   String get details =>
       'This scenario demonstrates the emergency alert system. '
-      'A group of 4 members will be created around your location, '
-      'then one member will trigger an SOS emergency. '
-      'The device will sound an alert to demonstrate the warning system.';
+      '10 group members will be placed in a 2km radius around your location, '
+      'then one member will trigger an SOS emergency.';
 
   @override
   String get iconName => 'warning_amber';
@@ -39,16 +33,16 @@ class EmergencyScenario extends BaseScenario {
 
   @override
   List<ScenarioStep> buildSteps(GeoPosition userPosition) {
-    // Generate members around user position
+    // Generate 10 members around user position at 2km radius
     final positions = geoService.generateCirclePositions(
       userPosition,
-      4,
-      200, // 200m radius
-      startBearing: 45, // Start NE
+      10,
+      2000, // 2km radius
+      startBearing: 0, // Start North
     );
 
     _members = List.generate(
-      4,
+      10,
       (i) => FakeMember(
         mac: generateMac(),
         name: generateUsername(),
@@ -58,54 +52,39 @@ class EmergencyScenario extends BaseScenario {
       ),
     );
 
-    // Pick random member for emergency
-    _emergencyMemberIndex = 1; // Second member triggers emergency
+    // Pick member for emergency (member 5)
+    _emergencyMemberIndex = 4;
 
-    return [
-      ScenarioStep(
-        title: 'Initialize',
-        description: 'Clear location repository',
-        execute: () async {
-          final result = await deviceService.commands?.initLocationRepo();
-          return result?.success ?? false;
-        },
-      ),
-      ScenarioStep(
-        title: 'Add Member 1',
-        description: 'Add ${_members[0].name} to the group',
-        execute: () => _addMember(_members[0]),
-      ),
-      ScenarioStep(
-        title: 'Add Member 2',
-        description: 'Add ${_members[1].name} to the group',
-        execute: () => _addMember(_members[1]),
-      ),
-      ScenarioStep(
-        title: 'Add Member 3',
-        description: 'Add ${_members[2].name} to the group',
-        execute: () => _addMember(_members[2]),
-      ),
-      ScenarioStep(
-        title: 'Add Member 4',
-        description: 'Add ${_members[3].name} to the group',
-        execute: () => _addMember(_members[3]),
-      ),
+    // Build steps: add all 10 members, then trigger emergency on one
+    final steps = <ScenarioStep>[];
+
+    for (var i = 0; i < 10; i++) {
+      steps.add(
+        ScenarioStep(
+          title: 'Add Member ${i + 1}',
+          description: 'Add ${_members[i].name} to the group',
+          execute: () => _addMember(_members[i]),
+        ),
+      );
+    }
+
+    steps.add(
       ScenarioStep(
         title: 'Trigger Emergency',
         description: '${_members[_emergencyMemberIndex].name} activates SOS!',
         execute: () => _triggerEmergency(_emergencyMemberIndex),
       ),
-      ScenarioStep(
-        title: 'Sound Alert',
-        description: 'Playing emergency buzzer',
-        execute: () => _playEmergencyBuzzer(),
-      ),
+    );
+
+    steps.add(
       ScenarioStep(
         title: 'Complete',
         description: 'Emergency scenario finished',
         execute: () async => true,
       ),
-    ];
+    );
+
+    return steps;
   }
 
   Future<bool> _addMember(FakeMember member) async {
@@ -116,24 +95,25 @@ class EmergencyScenario extends BaseScenario {
       battery: member.battery,
       status: member.status,
     );
-    await Future.delayed(const Duration(milliseconds: 200));
     return result?.success ?? false;
   }
 
   Future<bool> _triggerEmergency(int memberIndex) async {
     final member = _members[memberIndex];
 
-    // Update member with emergency status
-    final result = await deviceService.commands?.addLocation(
+    // Inject alert via LoRa RX path - this properly triggers device alarm
+    // Format: rftag proto inject_alert <mac> <status> [lat] [lon] [battery]
+    final alertResult = await deviceService.commands?.injectAlert(
       mac: member.mac,
+      status: StatusFlags.emergency,
       lat: member.position.latitude,
       lon: member.position.longitude,
       battery: member.battery,
-      status: StatusFlags.emergency,
     );
+    if (alertResult?.success != true) return false;
 
-    // Also store to history for BLE notification
-    await deviceService.commands?.storeLocationHistory(
+    // Also store to history for BLE notification to phone app
+    final histResult = await deviceService.commands?.storeLocationHistory(
       mac: member.mac,
       lat: member.position.latitude,
       lon: member.position.longitude,
@@ -142,21 +122,6 @@ class EmergencyScenario extends BaseScenario {
       skipThrottle: true,
     );
 
-    await Future.delayed(const Duration(milliseconds: 500));
-    return result?.success ?? false;
-  }
-
-  Future<bool> _playEmergencyBuzzer() async {
-    // Play warning tone pattern
-    for (var i = 0; i < 3; i++) {
-      final result = await deviceService.commands?.playBuzzer(
-        frequencyHz: 2500,
-        durationMs: 200,
-        dutyCycle: 80,
-      );
-      if (result?.success != true) return false;
-      await Future.delayed(const Duration(milliseconds: 300));
-    }
-    return true;
+    return histResult?.success ?? false;
   }
 }

@@ -99,6 +99,9 @@ abstract class BaseScenario {
   /// Random generator for fake data.
   final _random = math.Random();
 
+  /// Counter for sequential MAC addresses.
+  int _macCounter = 0;
+
   BaseScenario({required this.deviceService, required this.geoService});
 
   /// Scenario display name.
@@ -122,6 +125,7 @@ abstract class BaseScenario {
   /// Execute the scenario.
   Future<ScenarioResult> execute() async {
     _cancelled = false;
+    _macCounter = 0; // Reset MAC counter for each scenario run
 
     // Get user position (will use default demo location if geolocation unavailable)
     final userPosition = await geoService.getCurrentPosition();
@@ -190,12 +194,10 @@ abstract class BaseScenario {
     _cancelled = true;
   }
 
-  /// Generate a random MAC address.
+  /// Generate a sequential MAC address like AABBCCDDEE01, AABBCCDDEE02, etc.
   String generateMac() {
-    final bytes = List.generate(6, (_) => _random.nextInt(256));
-    return bytes
-        .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
-        .join('');
+    _macCounter++;
+    return 'AABBCCDDEE${_macCounter.toString().padLeft(2, '0')}';
   }
 
   /// Generate a random username.

@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:js_interop';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
-// Web-specific imports for geolocation
-import 'dart:js_interop';
+// JS interop for Geolocation API
+@JS('navigator.geolocation')
+external JSObject? get _geolocation;
 
 /// Geographic position.
 @immutable
@@ -45,6 +47,76 @@ class GeoService {
     // Return default location for demo purposes
     debugPrint('Using default demo location: $defaultLocation');
     return defaultLocation;
+  }
+
+  /// Get browser geolocation using JS interop.
+  Future<GeoPosition?> _getBrowserPosition() async {
+    final geo = _geolocation;
+    if (geo == null) {
+      debugPrint('Geolocation API not available');
+      return null;
+    }
+
+    final completer = Completer<GeoPosition?>();
+
+    // Success callback
+    void onSuccess(JSObject position) {
+      try {
+        final coords = position.getProperty<JSObject>('coords'.toJS);
+        final lat = (coords.getProperty<JSNumber>(
+          'latitude'.toJS,
+        )).toDartDouble;
+        final lon = (coords.getProperty<JSNumber>(
+          'longitude'.toJS,
+        )).toDartDouble;
+        debugPrint('Geolocation success: $lat, $lon');
+        completer.complete(GeoPosition(latitude: lat, longitude: lon));
+      } catch (e) {
+        debugPrint('Error parsing position: $e');
+        completer.complete(null);
+      }
+    }
+
+    // Error callback
+    void onError(JSObject error) {
+      try {
+        final code = error.getProperty<JSNumber?>('code'.toJS)?.toDartInt ?? -1;
+        final message =
+            error.getProperty<JSString?>('message'.toJS)?.toDart ??
+            'Unknown error';
+        debugPrint('Geolocation error ($code): $message');
+      } catch (_) {
+        debugPrint('Geolocation error (unknown)');
+      }
+      completer.complete(null);
+    }
+
+    // Call getCurrentPosition
+    final getCurrentPositionFn = geo.getProperty<JSFunction>(
+      'getCurrentPosition'.toJS,
+    );
+
+    // Options: high accuracy, 10 second timeout
+    final options = JSObject();
+    options.setProperty('enableHighAccuracy'.toJS, true.toJS);
+    options.setProperty('timeout'.toJS, 10000.toJS);
+    options.setProperty('maximumAge'.toJS, 60000.toJS);
+
+    getCurrentPositionFn.callAsFunction(
+      geo,
+      onSuccess.toJS,
+      onError.toJS,
+      options,
+    );
+
+    // Timeout after 12 seconds
+    return completer.future.timeout(
+      const Duration(seconds: 12),
+      onTimeout: () {
+        debugPrint('Geolocation timeout');
+        return null;
+      },
+    );
   }
 
   /// Calculate a new position offset from origin by distance and bearing.
@@ -162,70 +234,21 @@ class GeoService {
 
   double _toRadians(double degrees) => degrees * math.pi / 180;
   double _toDegrees(double radians) => radians * 180 / math.pi;
-
-  /// Get browser geolocation using JS interop.
-  Future<GeoPosition?> _getBrowserPosition() async {
-    final completer = Completer<GeoPosition?>();
-
-    final navigator = _getNavigator();
-    if (navigator == null) {
-      return null;
-    }
-
-    final geolocation = _getGeolocation(navigator);
-    if (geolocation == null) {
-      return null;
-    }
-
-    // Create callbacks
-    void onSuccess(JSObject position) {
-      try {
-        final coords = _getProperty(position, 'coords') as JSObject;
-        final lat = _getDoubleProperty(coords, 'latitude');
-        final lon = _getDoubleProperty(coords, 'longitude');
-
-        if (lat != null && lon != null) {
-          completer.complete(GeoPosition(latitude: lat, longitude: lon));
-        } else {
-          completer.complete(null);
-        }
-      } catch (e) {
-        completer.complete(null);
-      }
-    }
-
-    void onError(JSObject error) {
-      debugPrint('Geolocation error: $error');
-      completer.complete(null);
-    }
-
-    // Call getCurrentPosition
-    final getCurrentPositionFn =
-        _getProperty(geolocation, 'getCurrentPosition') as JSFunction;
-    getCurrentPositionFn.callAsFunction(
-      geolocation,
-      onSuccess.toJS,
-      onError.toJS,
-    );
-
-    return completer.future;
-  }
 }
 
 // JS interop helpers
+extension on JSObject {
+  T getProperty<T extends JSAny?>(JSString name) {
+    return _jsGetProperty(this, name) as T;
+  }
 
-@JS('navigator')
-external JSObject? _getNavigator();
-
-JSObject? _getGeolocation(JSObject navigator) {
-  return _getProperty(navigator, 'geolocation') as JSObject?;
+  void setProperty(JSString name, JSAny? value) {
+    _jsSetProperty(this, name, value);
+  }
 }
 
 @JS('Reflect.get')
-external JSAny? _getProperty(JSObject obj, String key);
+external JSAny? _jsGetProperty(JSObject obj, JSString name);
 
-double? _getDoubleProperty(JSObject obj, String key) {
-  final val = _getProperty(obj, key);
-  if (val == null || val.isUndefinedOrNull) return null;
-  return (val as JSNumber).toDartDouble;
-}
+@JS('Reflect.set')
+external void _jsSetProperty(JSObject obj, JSString name, JSAny? value);

@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../scenarios/base_scenario.dart';
 import '../scenarios/emergency_scenario.dart';
-import '../scenarios/join_scenario.dart';
-import '../scenarios/messaging_scenario.dart';
 import '../scenarios/movement_scenario.dart';
 import '../services/device_service.dart';
 import '../services/geo_service.dart';
@@ -58,8 +56,6 @@ class _DemoHomePageState extends State<DemoHomePage> {
     _scenarios = [
       EmergencyScenario(deviceService: _deviceService, geoService: _geoService),
       MovementScenario(deviceService: _deviceService, geoService: _geoService),
-      JoinGroupScenario(deviceService: _deviceService, geoService: _geoService),
-      MessagingScenario(deviceService: _deviceService, geoService: _geoService),
     ];
   }
 
@@ -507,7 +503,7 @@ class _DemoHomePageState extends State<DemoHomePage> {
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
-            mainAxisExtent: 200,
+            mainAxisExtent: 240, // Increased to accommodate progress bar
           ),
           itemCount: _scenarios.length,
           itemBuilder: (context, index) {

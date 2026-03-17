@@ -24,8 +24,8 @@ class CommandResult {
 
 /// Status flags for RFTag members.
 class StatusFlags {
-  static const int emergency = 0x0001;
-  static const int leader = 0x0002;
+  static const int leader = 0x0001; // Bit 0: LEADER
+  static const int emergency = 0x0002; // Bit 1: EMERGENCY
   static const int fallen = 0x0004;
   static const int lowBattery = 0x0008;
   static const int noGps = 0x0010;
@@ -47,82 +47,50 @@ class RftagCommands {
   static const Duration defaultTimeout = Duration(seconds: 3);
 
   final Future<bool> Function(Uint8List data) _sendBytes;
-  final Stream<Uint8List> _dataStream;
+  final Future<String> Function(String command, {Duration timeout})
+  _executeCommand;
   final void Function(String message) _onLog;
-
-  /// Buffer for accumulating incoming data.
-  final StringBuffer _responseBuffer = StringBuffer();
-  StreamSubscription<Uint8List>? _dataSubscription;
-
-  /// Completer for current command waiting for response.
-  Completer<String>? _responseCompleter;
 
   RftagCommands({
     required Future<bool> Function(Uint8List data) sendBytes,
-    required Stream<Uint8List> dataStream,
+    required Future<String> Function(String command, {Duration timeout})
+    executeCommand,
+    required Stream<Uint8List>
+    dataStream, // kept for compatibility but not used
     required void Function(String message) onLog,
   }) : _sendBytes = sendBytes,
-       _dataStream = dataStream,
-       _onLog = onLog {
-    _startListening();
-  }
-
-  void _startListening() {
-    _dataSubscription = _dataStream.listen(_onDataReceived);
-  }
-
-  void _onDataReceived(Uint8List data) {
-    final text = String.fromCharCodes(data);
-    _responseBuffer.write(text);
-
-    // Check if we have a complete response (prompt received)
-    if (_responseBuffer.toString().contains(shellPrompt)) {
-      _responseCompleter?.complete(_responseBuffer.toString());
-      _responseCompleter = null;
-      _responseBuffer.clear();
-    }
-  }
+       _executeCommand = executeCommand,
+       _onLog = onLog;
 
   /// Send a raw command and wait for response until prompt.
   Future<CommandResult> sendCommand(
     String command, {
     Duration timeout = defaultTimeout,
   }) async {
-    // Clear any pending data
-    _responseBuffer.clear();
-
-    // Create completer for this command
-    _responseCompleter = Completer<String>();
-
-    // Send command with newline
-    final cmdBytes = Uint8List.fromList('$command\r\n'.codeUnits);
-    final sent = await _sendBytes(cmdBytes);
-
-    if (!sent) {
-      _onLog('❌ Failed to send command: $command');
-      return const CommandResult(
-        success: false,
-        output: 'Failed to send command',
-        rawResponse: '',
-        errorCode: -1,
-      );
-    }
-
     _onLog('TX: $command');
 
-    // Wait for response with timeout
     try {
-      final rawResponse = await _responseCompleter!.future.timeout(timeout);
+      final rawResponse = await _executeCommand(command, timeout: timeout);
+
+      if (rawResponse.isEmpty) {
+        _onLog('⏱️ Command timeout: $command');
+        return CommandResult(
+          success: false,
+          output: 'Command timed out',
+          rawResponse: '',
+          errorCode: -1,
+        );
+      }
+
       final result = _parseResponse(command, rawResponse);
       _onLog('RX: ${result.output}');
       return result;
-    } on TimeoutException {
-      _onLog('⏱️ Command timeout: $command');
-      _responseCompleter = null;
+    } catch (e) {
+      _onLog('❌ Command error: $e');
       return CommandResult(
         success: false,
-        output: 'Command timed out',
-        rawResponse: _responseBuffer.toString(),
+        output: 'Command error: $e',
+        rawResponse: '',
         errorCode: -1,
       );
     }
@@ -189,7 +157,7 @@ class RftagCommands {
       await Future.delayed(const Duration(milliseconds: 50));
     }
     await Future.delayed(const Duration(milliseconds: 200));
-    _responseBuffer.clear();
+    // Note: No buffer to clear with direct command execution
   }
 
   /// Get device firmware version.
@@ -233,9 +201,12 @@ class RftagCommands {
     int? timestamp,
   }) {
     final statusHex = StatusFlags.toHex(status);
+    // Round to 6 decimal places for shorter command strings
+    final latStr = lat.toStringAsFixed(6);
+    final lonStr = lon.toStringAsFixed(6);
     final cmd = timestamp != null
-        ? 'rftag loc add $mac $lat $lon $battery $statusHex $timestamp'
-        : 'rftag loc add $mac $lat $lon $battery $statusHex';
+        ? 'rftag loc add $mac $latStr $lonStr $battery $statusHex $timestamp'
+        : 'rftag loc add $mac $latStr $lonStr $battery $statusHex';
     return sendCommand(cmd);
   }
 
@@ -252,7 +223,10 @@ class RftagCommands {
   /// Clear location repository.
   Future<CommandResult> clearLocations() => sendCommand('rftag loc init');
 
-  /// Store location to history.
+  /// Store location to history (triggers BLE notification).
+  ///
+  /// Firmware format: store_history <mac> <lat> <lon> <status> <battery> [timestamp] [skip_throttle]
+  /// Note: Using 3 decimal places (~100m accuracy) to fit within 64 char buffer limit.
   Future<CommandResult> storeLocationHistory({
     required String mac,
     required double lat,
@@ -262,12 +236,27 @@ class RftagCommands {
     int? timestamp,
     bool skipThrottle = true,
   }) {
-    final statusHex = StatusFlags.toHex(status);
-    final ts = timestamp ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000);
-    final skip = skipThrottle ? '1' : '0';
-    return sendCommand(
-      'rftag loc store_history $mac $lat $lon $statusHex $battery $ts $skip',
-    );
+    // Use decimal status (shorter than hex) and 3 decimal places to fit in 64 char buffer
+    // Full command with skip_throttle: "rftag loc store_history AABBCCDDEE05 24.965 121.564 2 85 0 1" = 62 chars
+    final latStr = lat.toStringAsFixed(3);
+    final lonStr = lon.toStringAsFixed(3);
+    // Build command with optional timestamp and skip_throttle flag
+    final parts = [
+      'rftag loc store_history',
+      mac,
+      latStr,
+      lonStr,
+      '$status', // Decimal is shorter than hex (2 vs 0x0002)
+      '$battery',
+    ];
+    if (timestamp != null || skipThrottle) {
+      // If we need skip_throttle, we must include timestamp (use 0 for "now")
+      parts.add('${timestamp ?? 0}');
+      if (skipThrottle) {
+        parts.add('1'); // skip_throttle = 1 to bypass 300s throttle
+      }
+    }
+    return sendCommand(parts.join(' '));
   }
 
   // ==================== Settings Commands ====================
@@ -325,9 +314,38 @@ class RftagCommands {
   Future<CommandResult> sendDirect(String targetMac, String text) =>
       sendCommand('rftag protocol send_direct $targetMac "$text"');
 
+  /// Inject a fake LoRa alert (triggers device alarm via LoRa RX path).
+  ///
+  /// Format: rftag proto inject_alert <mac> <status_flags_hex> [lat] [lon] [battery]
+  /// This simulates receiving an alert via LoRa, properly triggering emergency mode.
+  Future<CommandResult> injectAlert({
+    required String mac,
+    required int status,
+    double? lat,
+    double? lon,
+    int? battery,
+  }) {
+    final statusHex = StatusFlags.toHex(status);
+    // Use 4 decimal places for coordinates to keep command short
+    final latStr = lat?.toStringAsFixed(4) ?? '';
+    final lonStr = lon?.toStringAsFixed(4) ?? '';
+    final batStr = battery?.toString() ?? '';
+
+    // Build command with optional params
+    var cmd = 'rftag proto inject_alert $mac $statusHex';
+    if (lat != null && lon != null) {
+      cmd += ' $latStr $lonStr';
+      if (battery != null) {
+        cmd += ' $batStr';
+      }
+    }
+    return sendCommand(cmd);
+  }
+
   // ==================== Message Repository Commands ====================
 
   /// Store incoming message (simulates receiving a message).
+  /// Note: Command kept short to fit serial buffer (~64 chars max).
   Future<CommandResult> storeIncomingMessage({
     required String fromMac,
     required String text,
@@ -335,9 +353,11 @@ class RftagCommands {
     int status = 0,
   }) {
     final ts = timestamp ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+    // Truncate text to keep command short (buffer limit)
+    final shortText = text.length > 8 ? text.substring(0, 8) : text;
     final statusHex = StatusFlags.toHex(status);
     return sendCommand(
-      'rftag msg incoming store $fromMac "$text" $ts $statusHex',
+      'rftag msg incoming store $fromMac "$shortText" $ts $statusHex',
     );
   }
 
@@ -393,6 +413,6 @@ class RftagCommands {
   Future<CommandResult> stopBuzzer() => sendCommand('rftag buz stop');
 
   void dispose() {
-    _dataSubscription?.cancel();
+    // No cleanup needed - using direct command execution
   }
 }
