@@ -62,6 +62,14 @@ class RftagCommands {
        _executeCommand = executeCommand,
        _onLog = onLog;
 
+  /// Send a clear line (just \r\n) to flush any partial command in firmware buffer.
+  /// Call this before sending a new command after a potential timeout/corruption.
+  Future<void> sendClearLine() async {
+    // Send empty line to clear firmware shell buffer, wait for it to settle
+    await _sendBytes(Uint8List.fromList('\r\n'.codeUnits));
+    await Future.delayed(const Duration(milliseconds: 100));
+  }
+
   /// Send a raw command and wait for response until prompt.
   Future<CommandResult> sendCommand(
     String command, {
