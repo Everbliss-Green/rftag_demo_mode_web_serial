@@ -33,13 +33,22 @@ class EmergencyScenario extends BaseScenario {
 
   @override
   List<ScenarioStep> buildSteps(GeoPosition userPosition) {
-    // Generate 10 members around user position at 2km radius
+    // Hardcoded position (ignore browser geolocation)
+    const hardcodedPosition = GeoPosition(
+      latitude: 24.979281,
+      longitude: 121.552391,
+    );
+
+    // Generate 10 members around hardcoded position at 2km radius
     final positions = geoService.generateCirclePositions(
-      userPosition,
+      hardcodedPosition,
       10,
       2000, // 2km radius
       startBearing: 0, // Start North
     );
+
+    // Pick member for emergency (member 5)
+    _emergencyMemberIndex = 4;
 
     _members = List.generate(
       10,
@@ -48,12 +57,9 @@ class EmergencyScenario extends BaseScenario {
         name: generateUsername(),
         position: positions[i],
         battery: generateBattery(),
-        status: 0, // Normal status
+        status: i == _emergencyMemberIndex ? StatusFlags.emergency : 0,
       ),
     );
-
-    // Pick member for emergency (member 5)
-    _emergencyMemberIndex = 4;
 
     // Build steps: add all 10 members, then trigger emergency on one
     final steps = <ScenarioStep>[];

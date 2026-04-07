@@ -60,6 +60,12 @@ class MovementScenario extends BaseScenario {
 
   @override
   List<ScenarioStep> buildSteps(GeoPosition userPosition) {
+    // Hardcoded position (ignore browser geolocation)
+    const hardcodedPosition = GeoPosition(
+      latitude: 25.056359,
+      longitude: 121.617327,
+    );
+
     // Initialize timestamps for today (start at 8:00 AM today)
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day, 8, 0, 0);
@@ -68,7 +74,11 @@ class MovementScenario extends BaseScenario {
 
     // All users orbit at 2000m distance
     // Cluster group: Start at bearing 0° (North)
-    final clusterBasePos = geoService.offsetPosition(userPosition, 2000, 0);
+    final clusterBasePos = geoService.offsetPosition(
+      hardcodedPosition,
+      2000,
+      0,
+    );
     _clusterGroup = List.generate(
       3,
       (i) => FakeMember(
@@ -85,7 +95,11 @@ class MovementScenario extends BaseScenario {
     );
 
     // Solo member: Start at bearing 180° (South, opposite side of circle)
-    final soloStartPos = geoService.offsetPosition(userPosition, 2000, 180);
+    final soloStartPos = geoService.offsetPosition(
+      hardcodedPosition,
+      2000,
+      180,
+    );
     _soloMember = FakeMember(
       mac: generateMac(),
       name: generateUsername(),
@@ -128,7 +142,7 @@ class MovementScenario extends BaseScenario {
         return ScenarioStep(
           title: 'Move $stepNum/$_totalUpdates ($timeStr)',
           description: _getMovementDescription(stepNum),
-          execute: () => _updateMovement(userPosition, stepNum),
+          execute: () => _updateMovement(hardcodedPosition, stepNum),
         );
       }),
       ScenarioStep(
@@ -145,10 +159,10 @@ class MovementScenario extends BaseScenario {
     final direction = bearing < 90
         ? 'NE'
         : bearing < 180
-            ? 'SE'
-            : bearing < 270
-                ? 'SW'
-                : 'NW';
+        ? 'SE'
+        : bearing < 270
+        ? 'SW'
+        : 'NW';
     return 'Orbiting at 2km ($direction, ${bearing}°)';
   }
 
@@ -218,21 +232,36 @@ class MovementScenario extends BaseScenario {
 
     // First batch: 5 consecutive history entries
     await _sendHistoryBatch(
-        userPosition, orbitDistance, clusterBearing, soloBearing, 5);
+      userPosition,
+      orbitDistance,
+      clusterBearing,
+      soloBearing,
+      5,
+    );
 
     // Wait 3 minutes (movement continues in main loop)
     await Future.delayed(const Duration(minutes: 3));
 
     // Second batch: 5 more history entries
     await _sendHistoryBatch(
-        userPosition, orbitDistance, clusterBearing, soloBearing, 5);
+      userPosition,
+      orbitDistance,
+      clusterBearing,
+      soloBearing,
+      5,
+    );
 
     // Wait 3 minutes (movement continues in main loop)
     await Future.delayed(const Duration(minutes: 3));
 
     // Third batch: 5 more history entries
     await _sendHistoryBatch(
-        userPosition, orbitDistance, clusterBearing, soloBearing, 5);
+      userPosition,
+      orbitDistance,
+      clusterBearing,
+      soloBearing,
+      5,
+    );
   }
 
   /// Send N history entries for all 4 members
