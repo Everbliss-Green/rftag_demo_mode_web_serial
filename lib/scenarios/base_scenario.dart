@@ -122,15 +122,16 @@ abstract class BaseScenario {
   /// Build the steps for this scenario.
   List<ScenarioStep> buildSteps(GeoPosition userPosition);
 
-  /// Execute the scenario.
-  Future<ScenarioResult> execute() async {
+  /// Execute the scenario with the given center position.
+  ///
+  /// [centerPosition] is the location around which demo members will be placed.
+  /// This should be provided by the caller (e.g., from browser geolocation or
+  /// manual user entry).
+  Future<ScenarioResult> execute(GeoPosition centerPosition) async {
     _cancelled = false;
     _macCounter = 0; // Reset MAC counter for each scenario run
 
-    // Get user position (will use default demo location if geolocation unavailable)
-    final userPosition = await geoService.getCurrentPosition();
-
-    final steps = buildSteps(userPosition);
+    final steps = buildSteps(centerPosition);
     var completedSteps = 0;
 
     for (var i = 0; i < steps.length; i++) {
@@ -203,21 +204,16 @@ abstract class BaseScenario {
   /// Generate a random username.
   String generateUsername() {
     const names = [
-      'Alex',
-      'Jordan',
-      'Taylor',
-      'Morgan',
-      'Casey',
-      'Riley',
-      'Quinn',
-      'Avery',
-      'Drew',
-      'Skyler',
-      'Reese',
-      'Parker',
-      'Blake',
-      'Hayden',
-      'Dakota',
+      'Taco',
+      'Dan',
+      'Sandra',
+      'Cathy',
+      'Luis',
+      'Zoey',
+      'Joe',
+      'Luke',
+      'Max',
+      'Kim',
     ];
     return names[_random.nextInt(names.length)];
   }

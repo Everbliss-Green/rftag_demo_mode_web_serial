@@ -36,6 +36,7 @@ class MovementScenario extends BaseScenario {
 
   late FakeMember _soloMember; // 1 solo member
   late List<FakeMember> _clusterGroup; // 3 members clustered
+  late GeoPosition _centerPosition; // Center position for orbit
 
   // 8 hours = 28800 seconds / 5 seconds per update = 5760 updates
   static const int _totalUpdates = 5760;
@@ -60,11 +61,8 @@ class MovementScenario extends BaseScenario {
 
   @override
   List<ScenarioStep> buildSteps(GeoPosition userPosition) {
-    // Hardcoded position (ignore browser geolocation)
-    const hardcodedPosition = GeoPosition(
-      latitude: 25.056359,
-      longitude: 121.617327,
-    );
+    // Store center position for _updateMovement
+    _centerPosition = userPosition;
 
     // Initialize timestamps for today (start at 8:00 AM today)
     final now = DateTime.now();
@@ -72,13 +70,9 @@ class MovementScenario extends BaseScenario {
     _baseTodayTimestamp = todayStart.millisecondsSinceEpoch ~/ 1000;
     _historyStepCounter = 0;
 
-    // All users orbit at 2000m distance
+    // All users orbit at 2000m distance around user position
     // Cluster group: Start at bearing 0° (North)
-    final clusterBasePos = geoService.offsetPosition(
-      hardcodedPosition,
-      2000,
-      0,
-    );
+    final clusterBasePos = geoService.offsetPosition(userPosition, 2000, 0);
     _clusterGroup = List.generate(
       3,
       (i) => FakeMember(
@@ -95,11 +89,7 @@ class MovementScenario extends BaseScenario {
     );
 
     // Solo member: Start at bearing 180° (South, opposite side of circle)
-    final soloStartPos = geoService.offsetPosition(
-      hardcodedPosition,
-      2000,
-      180,
-    );
+    final soloStartPos = geoService.offsetPosition(userPosition, 2000, 180);
     _soloMember = FakeMember(
       mac: generateMac(),
       name: generateUsername(),
@@ -142,7 +132,7 @@ class MovementScenario extends BaseScenario {
         return ScenarioStep(
           title: 'Move $stepNum/$_totalUpdates ($timeStr)',
           description: _getMovementDescription(stepNum),
-          execute: () => _updateMovement(hardcodedPosition, stepNum),
+          execute: () => _updateMovement(_centerPosition, stepNum),
         );
       }),
       ScenarioStep(
@@ -167,6 +157,9 @@ class MovementScenario extends BaseScenario {
   }
 
   Future<bool> _addSoloMember() async {
+    // Register username in firmware's user roster first
+    await deviceService.commands?.simulateJoin(_soloMember.mac, _soloMember.name);
+
     final result = await deviceService.commands?.addLocation(
       mac: _soloMember.mac,
       lat: _soloMember.position.latitude,
@@ -180,6 +173,9 @@ class MovementScenario extends BaseScenario {
 
   Future<bool> _addClusterGroup() async {
     for (final member in _clusterGroup) {
+      // Register username in firmware's user roster first
+      await deviceService.commands?.simulateJoin(member.mac, member.name);
+
       final result = await deviceService.commands?.addLocation(
         mac: member.mac,
         lat: member.position.latitude,

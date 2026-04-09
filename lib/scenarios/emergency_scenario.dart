@@ -33,22 +33,17 @@ class EmergencyScenario extends BaseScenario {
 
   @override
   List<ScenarioStep> buildSteps(GeoPosition userPosition) {
-    // Hardcoded position (ignore browser geolocation)
-    const hardcodedPosition = GeoPosition(
-      latitude: 24.979281,
-      longitude: 121.552391,
-    );
-
-    // Generate 10 members around hardcoded position at 2km radius
+    // Generate 10 members around user position at 2km radius
     final positions = geoService.generateCirclePositions(
-      hardcodedPosition,
+      userPosition,
       10,
       2000, // 2km radius
       startBearing: 0, // Start North
     );
 
-    // Pick member for emergency (member 5)
-    _emergencyMemberIndex = 4;
+    // Pick member for emergency (member 5, index 4)
+    const emergencyIndex = 4;
+    _emergencyMemberIndex = emergencyIndex;
 
     _members = List.generate(
       10,
@@ -57,7 +52,7 @@ class EmergencyScenario extends BaseScenario {
         name: generateUsername(),
         position: positions[i],
         battery: generateBattery(),
-        status: i == _emergencyMemberIndex ? StatusFlags.emergency : 0,
+        status: i == emergencyIndex ? StatusFlags.emergency : 0,
       ),
     );
 
@@ -94,6 +89,10 @@ class EmergencyScenario extends BaseScenario {
   }
 
   Future<bool> _addMember(FakeMember member) async {
+    // Register username in firmware's user roster first
+    await deviceService.commands?.simulateJoin(member.mac, member.name);
+
+    // Then add location data
     final result = await deviceService.commands?.addLocation(
       mac: member.mac,
       lat: member.position.latitude,

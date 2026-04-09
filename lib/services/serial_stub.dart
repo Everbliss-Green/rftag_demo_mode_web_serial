@@ -29,6 +29,13 @@ class PlatformSerial {
     return false;
   }
 
+  Future<String> executeCommand(
+    String command, {
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    return ''; // Platform not supported
+  }
+
   void dispose() {
     _logController.close();
     _dataController.close();

@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:js_interop';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
-// JS interop for Geolocation API
-@JS('navigator.geolocation')
-external JSObject? get _geolocation;
+import 'geo_service_web.dart'
+    if (dart.library.io) 'geo_service_stub.dart'
+    as platform;
 
 /// Geographic position.
 @immutable
@@ -24,18 +23,13 @@ class GeoPosition {
 class GeoService {
   static const double _earthRadiusMeters = 6371000;
 
-  /// Default demo location (San Francisco) used when geolocation is unavailable.
-  static const GeoPosition defaultLocation = GeoPosition(
-    latitude: 37.7749,
-    longitude: -122.4194,
-  );
-
   /// Get current position from browser geolocation API.
   ///
-  /// Returns a default demo location if geolocation is not available or denied.
-  Future<GeoPosition> getCurrentPosition() async {
+  /// Returns null if geolocation is not available or permission denied.
+  /// The caller should handle the null case (e.g., prompt for manual entry).
+  Future<GeoPosition?> getCurrentPosition() async {
     try {
-      final position = await _getBrowserPosition();
+      final position = await platform.getBrowserPosition();
       if (position != null) {
         debugPrint('Got browser location: $position');
         return position;
@@ -44,79 +38,10 @@ class GeoService {
       debugPrint('Geolocation error: $e');
     }
 
-    // Return default location for demo purposes
-    debugPrint('Using default demo location: $defaultLocation');
-    return defaultLocation;
-  }
-
-  /// Get browser geolocation using JS interop.
-  Future<GeoPosition?> _getBrowserPosition() async {
-    final geo = _geolocation;
-    if (geo == null) {
-      debugPrint('Geolocation API not available');
-      return null;
-    }
-
-    final completer = Completer<GeoPosition?>();
-
-    // Success callback
-    void onSuccess(JSObject position) {
-      try {
-        final coords = position.getProperty<JSObject>('coords'.toJS);
-        final lat = (coords.getProperty<JSNumber>(
-          'latitude'.toJS,
-        )).toDartDouble;
-        final lon = (coords.getProperty<JSNumber>(
-          'longitude'.toJS,
-        )).toDartDouble;
-        debugPrint('Geolocation success: $lat, $lon');
-        completer.complete(GeoPosition(latitude: lat, longitude: lon));
-      } catch (e) {
-        debugPrint('Error parsing position: $e');
-        completer.complete(null);
-      }
-    }
-
-    // Error callback
-    void onError(JSObject error) {
-      try {
-        final code = error.getProperty<JSNumber?>('code'.toJS)?.toDartInt ?? -1;
-        final message =
-            error.getProperty<JSString?>('message'.toJS)?.toDart ??
-            'Unknown error';
-        debugPrint('Geolocation error ($code): $message');
-      } catch (_) {
-        debugPrint('Geolocation error (unknown)');
-      }
-      completer.complete(null);
-    }
-
-    // Call getCurrentPosition
-    final getCurrentPositionFn = geo.getProperty<JSFunction>(
-      'getCurrentPosition'.toJS,
+    debugPrint(
+      'Geolocation unavailable - user must enter coordinates manually',
     );
-
-    // Options: high accuracy, 10 second timeout
-    final options = JSObject();
-    options.setProperty('enableHighAccuracy'.toJS, true.toJS);
-    options.setProperty('timeout'.toJS, 10000.toJS);
-    options.setProperty('maximumAge'.toJS, 60000.toJS);
-
-    getCurrentPositionFn.callAsFunction(
-      geo,
-      onSuccess.toJS,
-      onError.toJS,
-      options,
-    );
-
-    // Timeout after 12 seconds
-    return completer.future.timeout(
-      const Duration(seconds: 12),
-      onTimeout: () {
-        debugPrint('Geolocation timeout');
-        return null;
-      },
-    );
+    return null;
   }
 
   /// Calculate a new position offset from origin by distance and bearing.
@@ -235,20 +160,3 @@ class GeoService {
   double _toRadians(double degrees) => degrees * math.pi / 180;
   double _toDegrees(double radians) => radians * 180 / math.pi;
 }
-
-// JS interop helpers
-extension on JSObject {
-  T getProperty<T extends JSAny?>(JSString name) {
-    return _jsGetProperty(this, name) as T;
-  }
-
-  void setProperty(JSString name, JSAny? value) {
-    _jsSetProperty(this, name, value);
-  }
-}
-
-@JS('Reflect.get')
-external JSAny? _jsGetProperty(JSObject obj, JSString name);
-
-@JS('Reflect.set')
-external void _jsSetProperty(JSObject obj, JSString name, JSAny? value);

@@ -10,6 +10,7 @@ import '../services/geo_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/command_log_panel.dart';
 import '../widgets/connection_card.dart';
+import '../widgets/location_settings_card.dart';
 import '../widgets/scenario_card.dart';
 
 /// Main demo page with scenario cards and log panel.
@@ -27,6 +28,11 @@ class _DemoHomePageState extends State<DemoHomePage> {
   bool _isConnected = false;
   bool _isConnecting = false;
   DeviceInfo? _deviceInfo;
+
+  // Location state
+  GeoPosition? _userLocation;
+  bool _isLocationAutoDetected = false;
+  bool _isLoadingLocation = false;
 
   final List<LogEntry> _logs = [];
   bool _isLogExpanded = true;
@@ -46,6 +52,7 @@ class _DemoHomePageState extends State<DemoHomePage> {
     try {
       _initScenarios();
       _subscribeToLogs();
+      _detectLocation(); // Auto-detect on startup
     } catch (e) {
       _initError = e.toString();
       debugPrint('Init error: $e');
@@ -80,6 +87,31 @@ class _DemoHomePageState extends State<DemoHomePage> {
     });
   }
 
+  /// Attempt to detect location from browser geolocation API.
+  Future<void> _detectLocation() async {
+    setState(() {
+      _isLoadingLocation = true;
+    });
+
+    final position = await _geoService.getCurrentPosition();
+
+    setState(() {
+      _isLoadingLocation = false;
+      if (position != null) {
+        _userLocation = position;
+        _isLocationAutoDetected = true;
+      }
+    });
+  }
+
+  /// Set location manually from user input.
+  void _setManualLocation(GeoPosition position) {
+    setState(() {
+      _userLocation = position;
+      _isLocationAutoDetected = false;
+    });
+  }
+
   Future<void> _connect() async {
     setState(() {
       _isConnecting = true;
@@ -103,6 +135,17 @@ class _DemoHomePageState extends State<DemoHomePage> {
   }
 
   Future<void> _runScenario(BaseScenario scenario) async {
+    // Ensure location is set before running
+    if (_userLocation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please set your location first'),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
+
     final scenarioName = scenario.name;
 
     setState(() {
@@ -118,8 +161,8 @@ class _DemoHomePageState extends State<DemoHomePage> {
       });
     });
 
-    // Run scenario
-    final result = await scenario.execute();
+    // Run scenario with user's location
+    final result = await scenario.execute(_userLocation!);
 
     await progressSub.cancel();
 
@@ -269,6 +312,14 @@ class _DemoHomePageState extends State<DemoHomePage> {
                         onConnect: _connect,
                         onDisconnect: _disconnect,
                       ),
+                      const SizedBox(height: 16),
+                      LocationSettingsCard(
+                        currentPosition: _userLocation,
+                        isAutoDetected: _isLocationAutoDetected,
+                        isLoading: _isLoadingLocation,
+                        onDetectLocation: _detectLocation,
+                        onLocationChanged: _setManualLocation,
+                      ),
                       const SizedBox(height: 32),
                       _buildScenarioSection(),
                     ],
@@ -321,6 +372,14 @@ class _DemoHomePageState extends State<DemoHomePage> {
                         deviceInfo: _deviceInfo,
                         onConnect: _connect,
                         onDisconnect: _disconnect,
+                      ),
+                      const SizedBox(height: 16),
+                      LocationSettingsCard(
+                        currentPosition: _userLocation,
+                        isAutoDetected: _isLocationAutoDetected,
+                        isLoading: _isLoadingLocation,
+                        onDetectLocation: _detectLocation,
+                        onLocationChanged: _setManualLocation,
                       ),
                       const SizedBox(height: 24),
                       _buildScenarioSection(),
@@ -514,7 +573,8 @@ class _DemoHomePageState extends State<DemoHomePage> {
             return ScenarioCard(
               scenario: scenario,
               isRunning: isRunning,
-              isDisabled: !_isConnected || isOtherRunning,
+              isDisabled:
+                  !_isConnected || isOtherRunning || _userLocation == null,
               progress: _progress[scenario.name],
               lastResult: _results[scenario.name],
               onRun: () => _runScenario(scenario),
